@@ -1,41 +1,70 @@
-import { 
-  scripts, 
-  iterations, 
-  type Script, 
-  type InsertScript, 
-  type Iteration, 
-  type InsertIteration 
+import {
+  users,
+  scripts,
+  scriptIterations,
+  type User,
+  type InsertUser,
+  type Script,
+  type InsertScript,
+  type ScriptIteration,
+  type InsertScriptIteration,
+  type ScriptSettings,
+  type ScriptMetrics
 } from "@shared/schema";
 
-// Storage interface for CRUD operations
 export interface IStorage {
+  // User operations
+  getUser(id: number): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  
   // Script operations
   getScript(id: number): Promise<Script | undefined>;
-  getAllScripts(): Promise<Script[]>;
+  getUserScripts(userId: number): Promise<Script[]>;
   createScript(script: InsertScript): Promise<Script>;
-  updateScript(id: number, updates: Partial<Script>): Promise<Script | undefined>;
+  updateScript(id: number, script: Partial<Script>): Promise<Script | undefined>;
   deleteScript(id: number): Promise<boolean>;
   
-  // Iteration operations
-  getIteration(id: number): Promise<Iteration | undefined>;
-  getIterationsByScriptId(scriptId: number): Promise<Iteration[]>;
-  createIteration(iteration: InsertIteration): Promise<Iteration>;
-  updateIteration(id: number, updates: Partial<Iteration>): Promise<Iteration | undefined>;
-  deleteIteration(id: number): Promise<boolean>;
+  // Script iteration operations
+  getScriptIterations(scriptId: number): Promise<ScriptIteration[]>;
+  getScriptIteration(id: number): Promise<ScriptIteration | undefined>;
+  createScriptIteration(iteration: InsertScriptIteration): Promise<ScriptIteration>;
+  updateScriptIteration(id: number, iteration: Partial<ScriptIteration>): Promise<ScriptIteration | undefined>;
 }
 
-// In-memory storage implementation
 export class MemStorage implements IStorage {
+  private users: Map<number, User>;
   private scripts: Map<number, Script>;
-  private iterations: Map<number, Iteration>;
-  private scriptCurrentId: number;
-  private iterationCurrentId: number;
+  private scriptIterations: Map<number, ScriptIteration>;
+  private userId: number;
+  private scriptId: number;
+  private iterationId: number;
 
   constructor() {
+    this.users = new Map();
     this.scripts = new Map();
-    this.iterations = new Map();
-    this.scriptCurrentId = 1;
-    this.iterationCurrentId = 1;
+    this.scriptIterations = new Map();
+    this.userId = 1;
+    this.scriptId = 1;
+    this.iterationId = 1;
+  }
+
+  // User operations
+  async getUser(id: number): Promise<User | undefined> {
+    return this.users.get(id);
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(
+      (user) => user.username === username,
+    );
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const id = this.userId++;
+    const user: User = { ...insertUser, id };
+    this.users.set(id, user);
+    return user;
   }
 
   // Script operations
@@ -43,77 +72,72 @@ export class MemStorage implements IStorage {
     return this.scripts.get(id);
   }
 
-  async getAllScripts(): Promise<Script[]> {
-    return Array.from(this.scripts.values());
+  async getUserScripts(userId: number): Promise<Script[]> {
+    return Array.from(this.scripts.values()).filter(
+      (script) => script.userId === userId
+    );
   }
 
   async createScript(insertScript: InsertScript): Promise<Script> {
-    const id = this.scriptCurrentId++;
-    const script: Script = { 
-      ...insertScript, 
-      id, 
-      currentIteration: 0,
-      totalIterations: 4,
-      status: "draft"
+    const id = this.scriptId++;
+    const script: Script = {
+      ...insertScript,
+      id,
+      createdAt: new Date()
     };
     this.scripts.set(id, script);
     return script;
   }
 
-  async updateScript(id: number, updates: Partial<Script>): Promise<Script | undefined> {
+  async updateScript(id: number, scriptUpdate: Partial<Script>): Promise<Script | undefined> {
     const script = this.scripts.get(id);
     if (!script) return undefined;
     
-    const updatedScript = { ...script, ...updates };
+    const updatedScript = { ...script, ...scriptUpdate };
     this.scripts.set(id, updatedScript);
     return updatedScript;
   }
 
   async deleteScript(id: number): Promise<boolean> {
+    // Delete all iterations first
+    const iterations = await this.getScriptIterations(id);
+    for (const iteration of iterations) {
+      this.scriptIterations.delete(iteration.id);
+    }
+    
     return this.scripts.delete(id);
   }
 
-  // Iteration operations
-  async getIteration(id: number): Promise<Iteration | undefined> {
-    return this.iterations.get(id);
+  // Script iteration operations
+  async getScriptIterations(scriptId: number): Promise<ScriptIteration[]> {
+    return Array.from(this.scriptIterations.values()).filter(
+      (iteration) => iteration.scriptId === scriptId
+    ).sort((a, b) => a.iterationNumber - b.iterationNumber);
   }
 
-  async getIterationsByScriptId(scriptId: number): Promise<Iteration[]> {
-    return Array.from(this.iterations.values())
-      .filter(iteration => iteration.scriptId === scriptId)
-      .sort((a, b) => a.iterationNumber - b.iterationNumber);
+  async getScriptIteration(id: number): Promise<ScriptIteration | undefined> {
+    return this.scriptIterations.get(id);
   }
 
-  async createIteration(insertIteration: InsertIteration): Promise<Iteration> {
-    const id = this.iterationCurrentId++;
-    const iteration: Iteration = { ...insertIteration, id };
-    this.iterations.set(id, iteration);
-    
-    // Update script's current iteration if needed
-    const script = await this.getScript(insertIteration.scriptId);
-    if (script && insertIteration.iterationNumber > script.currentIteration) {
-      await this.updateScript(script.id, { 
-        currentIteration: insertIteration.iterationNumber,
-        status: insertIteration.iterationNumber >= script.totalIterations ? "completed" : "in_progress"
-      });
-    }
-    
+  async createScriptIteration(insertIteration: InsertScriptIteration): Promise<ScriptIteration> {
+    const id = this.iterationId++;
+    const iteration: ScriptIteration = {
+      ...insertIteration,
+      id,
+      createdAt: new Date()
+    };
+    this.scriptIterations.set(id, iteration);
     return iteration;
   }
 
-  async updateIteration(id: number, updates: Partial<Iteration>): Promise<Iteration | undefined> {
-    const iteration = this.iterations.get(id);
+  async updateScriptIteration(id: number, iterationUpdate: Partial<ScriptIteration>): Promise<ScriptIteration | undefined> {
+    const iteration = this.scriptIterations.get(id);
     if (!iteration) return undefined;
     
-    const updatedIteration = { ...iteration, ...updates };
-    this.iterations.set(id, updatedIteration);
+    const updatedIteration = { ...iteration, ...iterationUpdate };
+    this.scriptIterations.set(id, updatedIteration);
     return updatedIteration;
-  }
-
-  async deleteIteration(id: number): Promise<boolean> {
-    return this.iterations.delete(id);
   }
 }
 
-// Export the storage instance
 export const storage = new MemStorage();
